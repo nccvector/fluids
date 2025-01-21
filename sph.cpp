@@ -18,18 +18,18 @@
 
 const int DIMENSIONS = 2;
 
-float PARTICLE_RADIUS = 0.228f;
+float PARTICLE_RADIUS = 0.128f;
 float SMOOTHING_RADIUS = 1.0f;  // try to keep 25 neighbours within range
-float PRESSURE_MULTIPLIER = 100.0f;
-float TARGET_DENSITY = 3.0f;
+float PRESSURE_MULTIPLIER = 256.0f;
+float TARGET_DENSITY = 2.0f;
 bool COLLISION = true;
 
 // Physics
-const int   NUM_PARTICLES = 500;
-const float PARTICLE_MASS    = 1.0f;
-const float DELTA_TIME       = 0.016f;
+const int   NUM_PARTICLES = 1000;
+const float PARTICLE_MASS    = 0.5f;
+const float DELTA_TIME       = 0.046f;
 const glm::vec2 BOUNDS = glm::vec2(100, 70);
-float ACCELERATION_DAMPING = 0.01f;
+float ACCELERATION_DAMPING = 0.216f;
 
 // Boundary vars
 const float BOUNDARY_EPSILON = 0.001f;
@@ -122,28 +122,58 @@ void UpdatePressure(std::vector<Particle>& particles, const float maxDistance) {
   }
 }
 
-
-void UpdateAcceleration(std::vector<Particle>& particles, const float maxDistance) {
+void UpdateAcceleration(std::vector<Particle> &particles,
+                        const float maxDistance) {
   // Damping
-  for (int i=0; i<NUM_PARTICLES; i++) {
-    particles[i].acceleration = -ACCELERATION_DAMPING * particles[i].velocity + glm::vec2(0, 10);
+  for (int i = 0; i < NUM_PARTICLES; i++) {
+    particles[i].acceleration =
+        -ACCELERATION_DAMPING * particles[i].velocity + glm::vec2(0, 10);
   }
 
   // Pressure
-  for (int i=0; i<NUM_PARTICLES; i++) {
-    for (int j=i + 1; j < NUM_PARTICLES; j++) {
+  for (int i = 0; i < NUM_PARTICLES; i++) {
+    Particle &particle = particles[i];
+    for (int j = i + 1; j < NUM_PARTICLES; j++) {
+      if (i == j)
+        continue;
+
+      Particle &otherParticle = particles[j];
       glm::vec2 diff = particles[i].position - particles[j].position;
-      float pa =
-          -PARTICLE_MASS *
-          (particles[i].pressure / (std::pow(particles[i].density, 2.0f) + 0.0001f) +
-           particles[j].pressure / (std::pow(particles[j].density, 2.0f) + 0.0001f)) *
-          SmoothingKernelDerivative(glm::length(diff), SMOOTHING_RADIUS);
+      float pa = -PARTICLE_MASS *
+                 (particles[i].pressure /
+                      (std::pow(particles[i].density, 2.0f) + 0.0001f) +
+                  particles[j].pressure /
+                      (std::pow(particles[j].density, 2.0f) + 0.0001f)) *
+                 SmoothingKernelDerivative(glm::length(diff), SMOOTHING_RADIUS);
       particles[i].acceleration += pa * diff / (glm::length(diff) + 0.0001f);
       particles[j].acceleration -= pa * diff / (glm::length(diff) + 0.0001f);
+
+      if (COLLISION) {
+        // Particle Collision Resolution
+        glm::vec2 diffVector = otherParticle.position - particle.position;
+        float distance = glm::length(diffVector);
+        if (distance < 2 * PARTICLE_RADIUS) {
+          float penetration = 2 * PARTICLE_RADIUS - distance;
+
+          // Update position
+          glm::vec2 correctionDisplacement =
+              0.5f * penetration * diffVector / (distance + 0.0001f);
+
+          glm::vec2 correctionVelocity =
+              correctionDisplacement / DELTA_TIME;
+          correctionDisplacement += penetration/2 * glm::vec2(2 * (0.5 - uniform(gen)), 2 * (0.5 - uniform(gen)));
+
+          otherParticle.position += correctionDisplacement;
+          particle.position -= correctionDisplacement;
+
+          // // Update velocity
+          // otherParticle.velocity += correctionVelocity;
+          // particle.velocity -= correctionVelocity;
+        }
+      }
     }
   }
 }
-
 
 void ApplyInput(std::vector<Particle>& particles, glm::vec2 mousePosition, glm::vec2 mouseDelta) {
   for (int i=0; i<NUM_PARTICLES; i++) {
@@ -179,33 +209,7 @@ void UpdatePosition(std::vector<Particle>& particles, const float maxDistance) {
       particle.position.x = std::clamp(particle.position.x, 0 + PARTICLE_RADIUS + BOUNDARY_EPSILON, BOUNDS.x - PARTICLE_RADIUS - BOUNDARY_EPSILON);
     }
 
-    if (COLLISION) {
-      // Particle Collision Resolution
-      for (int j = 0; j < NUM_PARTICLES; j++) {
-        if (i == j)
-          continue;
 
-        Particle &otherParticle = particles[j];
-        glm::vec2 diffVector = otherParticle.position - particle.position;
-        float distance = glm::length(diffVector);
-        if (distance < 2 * PARTICLE_RADIUS) {
-          float penetration = 2 * PARTICLE_RADIUS - distance;
-
-          // Update position
-          glm::vec2 correctionDisplacement =
-              0.5f * penetration * diffVector / (distance + 0.0001f);
-          glm::vec2 correctionVelocity =
-              0.5f * correctionDisplacement / DELTA_TIME;
-
-          otherParticle.position += correctionDisplacement;
-          particle.position -= correctionDisplacement;
-
-          // Update velocity
-          otherParticle.velocity += correctionVelocity;
-          particle.velocity -= correctionVelocity;
-        }
-      }
-    }
   }
 }
 
@@ -285,7 +289,7 @@ int main() {
                   (unsigned char)finalColor.z, 255});
     }
 
-    DrawCircleLinesV(Vector2{mousePosition.x, mousePosition.y}, SMOOTHING_RADIUS * VIS_SCALE.x, WHITE);
+    DrawCircleLinesV(Vector2{mousePosition.x, mousePosition.y}, 2 * SMOOTHING_RADIUS * VIS_SCALE.x, WHITE);
 
     // // Visualize density squares
     // const float maxDistance = SMOOTHING_RADIUS;
@@ -305,7 +309,7 @@ int main() {
     ImGui::Text("%s", fmt::format("FPS: {}", GetFPS()).c_str());
     ImGui::SliderFloat("Pressure Radius: ", &PARTICLE_RADIUS, 0.01f, 5.0f);
     ImGui::SliderFloat("Smoothing Radius: ", &SMOOTHING_RADIUS, 0.01f, 30.0f);
-    ImGui::SliderFloat("Pressure Multipler (k): ", &PRESSURE_MULTIPLIER, 0.0f, 100.0f);
+    ImGui::SliderFloat("Pressure Multipler (k): ", &PRESSURE_MULTIPLIER, 0.0f, 500.0f);
     ImGui::SliderFloat("Target density: ", &TARGET_DENSITY, 0.0f, 20.2f);
     ImGui::Text("Visualization and Physics");
     ImGui::Checkbox("Collision", &COLLISION);
