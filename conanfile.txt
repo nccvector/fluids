@@ -1,0 +1,11 @@
+[requires]
+fmt/11.1.1
+raylib/5.5
+glm/cci.20230113
+
+[generators]
+CMakeDeps
+CMakeToolchain
+
+[layout]
+cmake_layout
