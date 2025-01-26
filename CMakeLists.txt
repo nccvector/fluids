@@ -5,18 +5,9 @@ project("fluids" LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# find_package(Threads REQUIRED)
-
-# find_package(OpenMP REQUIRED)
-# if (OPENMP_FOUND)
-#     set (CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${OpenMP_C_FLAGS}")
-#     set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${OpenMP_CXX_FLAGS}")
-#     set (CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} ${OpenMP_EXE_LINKER_FLAGS}")
-# endif()
-
-find_package(glm REQUIRED)
+find_package(glm CONFIG REQUIRED)
 find_package(fmt CONFIG REQUIRED)
-find_package(raylib REQUIRED)
+find_package(raylib CONFIG REQUIRED)
 
 include(FetchContent)
 Set(FETCHCONTENT_QUIET FALSE)

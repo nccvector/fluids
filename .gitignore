@@ -1,3 +1,7 @@
 build
 CMakeUserPresets*
 .cache
+.idea
+cmake-build*
+conan_provider.cmake
+
