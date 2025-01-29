@@ -2,7 +2,9 @@
 #include <fmt/base.h>
 #include <fmt/core.h>
 #include <random>
-#include <vector>
+#include <cmath> // for std::isnan
+#include <stdexcept> // for std::runtime_error
+#include <list>
 
 #include "glm/geometric.hpp"
 #include "glm/vec2.hpp"
@@ -15,6 +17,8 @@
 #include "imgui.h"
 #include "imgui_impl_raylib.h"
 
+#include "quadtree.h"
+
 /* Reference:
 Eurographics/ACM SIGGRAPH Symposium on Computer Animation (2005)
 K. Anjyo, P. Faloutsos (Editors)
@@ -24,16 +28,18 @@ LIGUM, Dept. IRO, Université de Montréal
 */
 
 const float h = 0.5f; // Particle interaction radius
-float k = 240.0f; // Stiffness constant (Pressure Multiplier)
+const float hinv = 1.0f / h;
+float k = 140.0f; // Stiffness constant (Pressure Multiplier)
 float rho0 = 2.0f; // Target density
-const float sigma = 0.005f; // Some viscosity factor
-const float beta = 0.005f; // Some viscosity factor
+const float sigma = 0.05f; // Some viscosity factor
+const float beta = 0.05f; // Some viscosity factor
 
 // Physics
-const int NUM_PARTICLES = 2000;
-const float DELTA_TIME = 0.046f;
+const int NUM_PARTICLES = 3000;
+const float DELTA_TIME = 0.026f;
 const glm::vec2 BOUNDS = glm::vec2(50, 20);
-float ACCELERATION_DAMPING = 0.0f;
+float ACCELERATION_DAMPING = 0.003f;
+bool gravity = true;
 
 // Boundary vars
 const float BOUNDARY_EPSILON = 0.001f;
@@ -54,7 +60,7 @@ struct Particle {
 };
 
 void ApplyInput(
-    std::vector<Particle> &particles, glm::vec2 mousePosition,
+    Particle *particles, glm::vec2 mousePosition,
     glm::vec2 mouseDelta
 ) {
     for (int i = 0; i < NUM_PARTICLES; i++) {
@@ -66,37 +72,15 @@ void ApplyInput(
     }
 }
 
-// void ApplyViscosity(std::vector<Particle> &particles) {
-//     for (int i = 0; i < NUM_PARTICLES; i++) {
-//       for (int j = 0; j < NUM_PARTICLES; j++) {
-//         if (i == j)
-//           continue;
-//         glm::vec2 rij = particles[j].position - particles[i].position;
-//         float distance = glm::length(rij);
-//         glm::vec2 direction = glm::normalize(rij);
-//         if (distance > h)
-//           continue;
-//         float q = distance / h;
-//         float u = glm::dot(particles[i].velocity - particles[j].velocity,
-//                            direction); // inward velocity
-//         glm::vec2 I = DELTA_TIME * (1.0f - q) *
-//                       (sigma * u + beta * u * u) * rij;
-//         particles[i].velocity -= 0.5f * I;
-//         particles[j].velocity += 0.5f * I;
-//       }
-//     }
-// }
-
-#include <cmath> // for std::isnan
-#include <stdexcept> // for std::runtime_error
-
-void ApplyViscosity(std::vector<Particle> &particles) {
+void ApplyViscosity(Particle *particles, Quadtree *tree) {
     for (int i = 0; i < NUM_PARTICLES; i++) {
-        for (int j = 0; j < NUM_PARTICLES; j++) {
-            if (i == j)
-                continue;
+        std::list<Element> elementsInRadius;
+        GetElementsInRadius(particles[i].position, h, elementsInRadius, tree);
 
-            glm::vec2 rij = particles[j].position - particles[i].position;
+        // Loop over neighours
+        for (auto &element: elementsInRadius) {
+            Particle &otherParticle = particles[element.id];
+            glm::vec2 rij = otherParticle.position - particles[i].position;
             float distance = glm::length(rij);
 
             // Check for NaN in distance
@@ -108,14 +92,14 @@ void ApplyViscosity(std::vector<Particle> &particles) {
             if (distance == 0 || distance > h)
                 continue;
 
-            float q = distance / h;
+            float q = distance * hinv;
 
             // Check for NaN in q
             if (std::isnan(q)) {
                 throw std::runtime_error("Detected NaN in 'q' computation.");
             }
 
-            float u = glm::dot(particles[j].velocity - particles[i].velocity, direction);
+            float u = glm::dot(otherParticle.velocity - particles[i].velocity, direction);
 
             // Check for NaN in u
             if (std::isnan(u)) {
@@ -130,7 +114,7 @@ void ApplyViscosity(std::vector<Particle> &particles) {
             }
 
             particles[i].velocity -= 0.5f * I;
-            particles[j].velocity += 0.5f * I;
+            otherParticle.velocity += 0.5f * I;
         }
     }
 }
@@ -142,16 +126,18 @@ void AdjustSprings() {
 void ApplySpringDisplacements() {
 }
 
-void DoubleDensityRelaxation(std::vector<Particle> &particles) {
+void DoubleDensityRelaxation(Particle *particles, Quadtree *tree) {
     for (int i = 0; i < NUM_PARTICLES; i++) {
         float rho = 0;
         float rhoNear = 0;
 
+        std::list<Element> elementsInRadius;
+        GetElementsInRadius(particles[i].position, h, elementsInRadius, tree);
+
         // Compute density and near density
-        for (int j = 0; j < NUM_PARTICLES; j++) {
-            if (i == j)
-                continue;
-            float distance = glm::length(particles[j].position - particles[i].position);
+        for (auto &element: elementsInRadius) {
+            Particle &otherParticle = particles[element.id];
+            float distance = glm::length(otherParticle.position - particles[i].position);
 
             // Check for NaN in distance
             if (std::isnan(distance)) {
@@ -183,10 +169,10 @@ void DoubleDensityRelaxation(std::vector<Particle> &particles) {
 
         // Compute and apply displacements
         glm::vec2 dx = {0, 0};
-        for (int j = 0; j < NUM_PARTICLES; j++) {
-            if (i == j)
-                continue;
-            glm::vec2 rij = particles[j].position - particles[i].position;
+        for (auto &element: elementsInRadius) {
+            Particle &otherParticle = particles[element.id];
+
+            glm::vec2 rij = otherParticle.position - particles[i].position;
             float distance = glm::length(rij);
 
             // Check for NaN in distance
@@ -197,7 +183,7 @@ void DoubleDensityRelaxation(std::vector<Particle> &particles) {
             if (distance > h)
                 continue;
 
-            float q = distance / h;
+            float q = distance * hinv;
 
             // Check for NaN in q
             if (std::isnan(q)) {
@@ -212,7 +198,7 @@ void DoubleDensityRelaxation(std::vector<Particle> &particles) {
                 throw std::runtime_error("Detected NaN in displacement vector 'D' computation.");
             }
 
-            particles[j].position += 0.5f * D;
+            otherParticle.position += 0.5f * D;
             dx -= 0.5f * D;
         }
 
@@ -228,11 +214,16 @@ void DoubleDensityRelaxation(std::vector<Particle> &particles) {
 void ResolveCollisions() {
 }
 
-void Simulate(std::vector<Particle> &particles) {
-    for (auto &particle: particles) {
+void Simulate(Particle *particles, Quadtree *tree) {
+    for (int i = 0; i < NUM_PARTICLES; i++) {
+        Particle &particle = particles[i];
+
         // Apply gravity
         particle.velocity -= DELTA_TIME * ACCELERATION_DAMPING * particle.velocity;
-        particle.velocity += DELTA_TIME * glm::vec2(0, 10);
+
+        if (gravity) {
+            particle.velocity += DELTA_TIME * glm::vec2(0, 10);
+        }
 
         const float MAX_VELOCITY = 100.0f;
         particle.velocity.x = std::clamp(particle.velocity.x, -MAX_VELOCITY, MAX_VELOCITY);
@@ -240,9 +231,9 @@ void Simulate(std::vector<Particle> &particles) {
     }
 
     // Modify velocities with pairwise velocity impulses
-    ApplyViscosity(particles);
+    ApplyViscosity(particles, tree);
 
-    std::vector<glm::vec2> previousPositions(NUM_PARTICLES, {0, 0});
+    glm::vec2 previousPositions[NUM_PARTICLES];
     for (int i = 0; i < NUM_PARTICLES; i++) {
         // record previous velocity
         previousPositions[i] = particles[i].position;
@@ -256,7 +247,7 @@ void Simulate(std::vector<Particle> &particles) {
     // Modify positions according to springs, double density relaxation and
     // collisions
     ApplySpringDisplacements(); // TODO
-    DoubleDensityRelaxation(particles);
+    DoubleDensityRelaxation(particles, tree);
     ResolveCollisions(); // TODO
 
     for (int i = 0; i < NUM_PARTICLES; i++) {
@@ -265,8 +256,9 @@ void Simulate(std::vector<Particle> &particles) {
             (particles[i].position - previousPositions[i]) / DELTA_TIME;
     }
 
-    for (auto &particle: particles) {
-        // BOUNDARY CONDITIONS
+    // BOUNDARY CONDITIONS
+    for (int i = 0; i < NUM_PARTICLES; i++) {
+        Particle &particle = particles[i];
         if (particle.position.y - h <= 0 || particle.position.y + h >= BOUNDS.y) {
             particle.velocity.y *= -1 * 0.5;
             particle.position.y +=
@@ -306,7 +298,7 @@ int main() {
         0.0, 1.0
     ); // Generates random floats in range [0.0, 1.0]
 
-    std::vector<Particle> particles;
+    Particle particles[NUM_PARTICLES];
     for (int i = 0; i < NUM_PARTICLES; i++) {
         Particle new_particle;
         new_particle.position =
@@ -314,7 +306,7 @@ int main() {
         new_particle.velocity =
             glm::vec2(0 * (uniform(gen) - 0.5), 0 * (uniform(gen) - 0.5));
 
-        particles.push_back(new_particle);
+        particles[i] = new_particle;
     }
 
     // Visualization
@@ -335,13 +327,15 @@ int main() {
         glm::vec2 mouseDelta = {GetMouseDelta().x, GetMouseDelta().y};
 
         // Simulate
-        Simulate(particles);
+        Quadtree tree;
+        tree.aabb = {glm::vec2(0, 0), BOUNDS};
+        for (int i = 0; i < NUM_PARTICLES; i++) {
+            Element element = {i, {particles[i].position - 0.05f, glm::vec2(0.1, 0.1)}};
+            Insert(&tree, element);
+        }
+        Simulate(particles, &tree);
 
         if (IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
-            fmt::println(
-                "Position: {}, {}, Delta: {}, {}", mousePosition.x,
-                mousePosition.y, mouseDelta.x, mouseDelta.y
-            );
             ApplyInput(particles, mousePosition / VIS_SCALE, mouseDelta / VIS_SCALE);
         }
 
@@ -354,7 +348,9 @@ int main() {
         static float maxVelocity = 10.0f;
         static float midVelocity = 5.0f;
         static float minVelocity = 0.0f;
-        for (auto &particle: particles) {
+        for (int i = 0; i < NUM_PARTICLES; i++) {
+            Particle &particle = particles[i];
+
             glm::vec3 red = {255, 0, 0};
             glm::vec3 green = {0, 255, 0};
             glm::vec3 blue = {0, 0, 255};
@@ -382,12 +378,26 @@ int main() {
             2 * h * VIS_SCALE.x, WHITE
         );
 
+        std::list<Element> elementsInRadius;
+        GetElementsInRadius(mousePosition / VIS_SCALE, 2 * h, elementsInRadius, &tree);
+
+        for (auto element: elementsInRadius) {
+            DrawCircle(
+                particles[element.id].position.x * VIS_SCALE.x, particles[element.id].position.y * VIS_SCALE.y,
+                h / 4.0f * VIS_SCALE.x, WHITE
+            );
+        }
+
+        DrawQuadtree(&tree, VIS_SCALE);
+
         // draw the debug panel
         ImGui::Begin("Parameters");
         ImGui::Text("%s", fmt::format("FPS: {}", GetFPS()).c_str());
+        ImGui::Text("%s", fmt::format("Num particles in radius: {}", elementsInRadius.size()).c_str());
         ImGui::SliderFloat("Pressure Multipler (k): ", &k, 0.0f, 500.0f);
         ImGui::SliderFloat("Target density: ", &rho0, 0.0f, 20.2f);
         ImGui::Text("Visualization and Physics");
+        ImGui::Checkbox("Gravity: ", &gravity);
         ImGui::SliderFloat("Max Velocity Vis", &maxVelocity, 0.0f, 10.0f);
         ImGui::SliderFloat("Mid Velocity Vis", &midVelocity, 0.0f, 10.0f);
         ImGui::SliderFloat(
