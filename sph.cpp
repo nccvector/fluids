@@ -30,14 +30,14 @@ LIGUM, Dept. IRO, Université de Montréal
 const float h = 0.5f; // Particle interaction radius
 const float hinv = 1.0f / h;
 float k = 140.0f; // Stiffness constant (Pressure Multiplier)
-float rho0 = 2.0f; // Target density
+float rho0 = 4.0f; // Target density
 const float sigma = 0.05f; // Some viscosity factor
 const float beta = 0.05f; // Some viscosity factor
 
 // Physics
 const int NUM_PARTICLES = 3000;
 const float DELTA_TIME = 0.026f;
-const glm::vec2 BOUNDS = glm::vec2(50, 20);
+const glm::vec2 BOUNDS = glm::vec2(35, 19.6875);
 float ACCELERATION_DAMPING = 0.003f;
 bool gravity = true;
 bool drawQuadtree = false;
