@@ -40,6 +40,7 @@ const float DELTA_TIME = 0.026f;
 const glm::vec2 BOUNDS = glm::vec2(50, 20);
 float ACCELERATION_DAMPING = 0.003f;
 bool gravity = true;
+bool drawQuadtree = false;
 
 // Boundary vars
 const float BOUNDARY_EPSILON = 0.001f;
@@ -388,7 +389,9 @@ int main() {
             );
         }
 
-        DrawQuadtree(&tree, VIS_SCALE);
+        if (drawQuadtree) {
+            DrawQuadtree(&tree, VIS_SCALE);
+        }
 
         // draw the debug panel
         ImGui::Begin("Parameters");
@@ -398,6 +401,7 @@ int main() {
         ImGui::SliderFloat("Target density: ", &rho0, 0.0f, 20.2f);
         ImGui::Text("Visualization and Physics");
         ImGui::Checkbox("Gravity: ", &gravity);
+        ImGui::Checkbox("Draw quadtree: ", &drawQuadtree);
         ImGui::SliderFloat("Max Velocity Vis", &maxVelocity, 0.0f, 10.0f);
         ImGui::SliderFloat("Mid Velocity Vis", &midVelocity, 0.0f, 10.0f);
         ImGui::SliderFloat(
